@@ -39,10 +39,17 @@ else:
 if os.path.exists(ADMINS_FILE):
     with open(ADMINS_FILE, "r") as f:
         try:
-            admins = json.load(f)
-        except json.JSONDecodeError:
+            data = json.load(f)
+            if isinstance(data, dict) and "admins" in data:
+                admins = data["admins"]
+            else:
+                admins = data if isinstance(data, list) else []
+        except (json.JSONDecodeError, ValueError):
             admins = []
 else:
+    admins = []
+
+if not isinstance(admins, list):
     admins = []
 
 if OWNER_ID not in admins:
@@ -67,7 +74,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [KeyboardButton("➕ Add Channel"), KeyboardButton("📤 Post to Channel")],
             [KeyboardButton("📋 My Channels"), KeyboardButton("🗑️ Remove Channel")],
-            [KeyboardButton("👥 Manage Admins")],  # Added Manage Admins option
+            [KeyboardButton("👥 Manage Admins")],
         ]
         await update.message.reply_text(
             "👋 Welcome! Choose an option:",
@@ -119,7 +126,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_post"] = []
         await update.message.reply_text("📝 Send the message(s) you want to post.")
 
-    # Added Manage Admins menu
     elif text == "👥 Manage Admins" and user_id == OWNER_ID:
         keyboard = [
             [KeyboardButton("➕ Add Admin"), KeyboardButton("🗑️ Remove Admins")],
@@ -134,7 +140,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "adding_admin"
         await update.message.reply_text("👤 Send the Telegram ID of the new admin:")
 
-    # Added Remove Admins functionality
     elif text == "🗑️ Remove Admins" and user_id == OWNER_ID:
         if len(admins) <= 1:
             await update.message.reply_text("❌ No admins to remove (only the owner remains).")
@@ -143,7 +148,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons = [[InlineKeyboardButton(f"❌ {admin_id}", callback_data=f"confirm_remove_admin|{admin_id}")] for admin_id in admins if admin_id != OWNER_ID]
         await update.message.reply_text("🗑️ Select an admin to remove:", reply_markup=InlineKeyboardMarkup(buttons))
 
-    # Added List Admins functionality
     elif text == "📋 List Admins" and user_id == OWNER_ID:
         if not admins:
             await update.message.reply_text("❌ No admins found.")
@@ -153,7 +157,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"{i+1}. `{admin_id}` {'(Owner)' if admin_id == OWNER_ID else ''}\n"
             await update.message.reply_text(msg, parse_mode="Markdown")
 
-    # Added Back button functionality
     elif text == "⬅️ Back" and user_id in admins:
         keyboard = [
             [KeyboardButton("➕ Add Channel"), KeyboardButton("📤 Post to Channel")],
@@ -291,7 +294,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_data()
             await query.edit_message_text(f"✅ Removed `{ch}`", parse_mode="Markdown")
 
-    # Added handler for removing admins
     elif query.data.startswith("confirm_remove_admin"):
         _, admin_id = query.data.split("|")
         admin_id = int(admin_id)
