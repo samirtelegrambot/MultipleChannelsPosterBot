@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID"))  # Make sure this is set in .env
+OWNER_ID = int(os.getenv("OWNER_ID"))
 ADMINS_FILE = "admins.json"
 DATA_FILE = "user_channels.json"
 MAX_CHANNELS = 5
@@ -29,7 +29,7 @@ MAX_CHANNELS = 5
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========================= Load Data ============================
+# ================= Load Data =================
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         user_channels = json.load(f)
@@ -38,36 +38,37 @@ else:
 
 if os.path.exists(ADMINS_FILE):
     with open(ADMINS_FILE, "r") as f:
-        admins = json.load(f)
+        try:
+            admins = json.load(f)
+        except json.JSONDecodeError:
+            admins = []
 else:
     admins = []
 
-# ✅ Ensure OWNER_ID is always in the admins list
 if OWNER_ID not in admins:
     admins.append(OWNER_ID)
     with open(ADMINS_FILE, "w") as f:
-        json.dump(admins, f)
+        json.dump(admins, f, indent=2)
 
 def save_data():
     with open(DATA_FILE, "w") as f:
-        json.dump(user_channels, f)
+        json.dump(user_channels, f, indent=2)
 
 def save_admins():
     with open(ADMINS_FILE, "w") as f:
-        json.dump(admins, f)
+        json.dump(admins, f, indent=2)
 
-# ========================= Handlers ============================
+# ================= Handlers =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"/start used by user: {user_id}")
-    
+
     if user_id in admins:
         keyboard = [
             [KeyboardButton("➕ Add Channel"), KeyboardButton("📤 Post to Channel")],
-            [KeyboardButton("📋 My Channels"), KeyboardButton("🗑️ Remove Channel")]
+            [KeyboardButton("📋 My Channels"), KeyboardButton("🗑️ Remove Channel")],
+            [KeyboardButton("👥 Manage Admins")],  # Added Manage Admins option
         ]
-        if user_id == OWNER_ID:
-            keyboard.append([KeyboardButton("➕ Add Admin")])
         await update.message.reply_text(
             "👋 Welcome! Choose an option:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
@@ -115,11 +116,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📤 Post to Channel":
         context.user_data["state"] = "awaiting_post"
         context.user_data["forwarded_batch"] = []
+        context.user_data["pending_post"] = []
         await update.message.reply_text("📝 Send the message(s) you want to post.")
+
+    # Added Manage Admins menu
+    elif text == "👥 Manage Admins" and user_id == OWNER_ID:
+        keyboard = [
+            [KeyboardButton("➕ Add Admin"), KeyboardButton("🗑️ Remove Admins")],
+            [KeyboardButton("📋 List Admins"), KeyboardButton("⬅️ Back")]
+        ]
+        await update.message.reply_text(
+            "👥 Manage Admins Menu - Choose an option:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        )
 
     elif text == "➕ Add Admin" and user_id == OWNER_ID:
         context.user_data["state"] = "adding_admin"
         await update.message.reply_text("👤 Send the Telegram ID of the new admin:")
+
+    # Added Remove Admins functionality
+    elif text == "🗑️ Remove Admins" and user_id == OWNER_ID:
+        if len(admins) <= 1:
+            await update.message.reply_text("❌ No admins to remove (only the owner remains).")
+            return
+        context.user_data["state"] = "removing_admin"
+        buttons = [[InlineKeyboardButton(f"❌ {admin_id}", callback_data=f"confirm_remove_admin|{admin_id}")] for admin_id in admins if admin_id != OWNER_ID]
+        await update.message.reply_text("🗑️ Select an admin to remove:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    # Added List Admins functionality
+    elif text == "📋 List Admins" and user_id == OWNER_ID:
+        if not admins:
+            await update.message.reply_text("❌ No admins found.")
+        else:
+            msg = "👥 Admins:\n"
+            for i, admin_id in enumerate(admins):
+                msg += f"{i+1}. `{admin_id}` {'(Owner)' if admin_id == OWNER_ID else ''}\n"
+            await update.message.reply_text(msg, parse_mode="Markdown")
+
+    # Added Back button functionality
+    elif text == "⬅️ Back" and user_id in admins:
+        keyboard = [
+            [KeyboardButton("➕ Add Channel"), KeyboardButton("📤 Post to Channel")],
+            [KeyboardButton("📋 My Channels"), KeyboardButton("🗑️ Remove Channel")],
+            [KeyboardButton("👥 Manage Admins")],
+        ]
+        await update.message.reply_text(
+            "👋 Welcome! Choose an option:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        )
 
     elif text == "✅ Post to All" and context.user_data.get("pending_post"):
         messages = context.user_data.get("pending_post", [])
@@ -133,14 +177,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Posted to all channels.", reply_markup=ReplyKeyboardRemove())
         context.user_data.clear()
 
-    elif text == "❌ Cancel" and context.user_data.get("pending_post"):
-        await update.message.reply_text("❌ Post cancelled.", reply_markup=ReplyKeyboardRemove())
+    elif text == "❌ Cancel":
         context.user_data.clear()
+        await update.message.reply_text("❌ Post cancelled.", reply_markup=ReplyKeyboardRemove())
 
     elif text == "📂 Select Channels" and context.user_data.get("pending_post"):
         channels = user_channels.get(str(user_id), [])
         if not channels:
-            await update.message.reply_text("❌ No channels available.", reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text("❌ No channels available.")
             context.user_data.clear()
             return
         context.user_data["state"] = "selecting_channels"
@@ -157,7 +201,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             messages = context.user_data.get("pending_post", [])
             selected_channels = context.user_data.get("selected_channels", [])
             if not selected_channels:
-                await update.message.reply_text("❌ No channels selected.", reply_markup=ReplyKeyboardRemove())
+                await update.message.reply_text("❌ No channels selected.")
             else:
                 for msg in messages:
                     for ch in selected_channels:
@@ -199,7 +243,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_channels[str(user_id)] = list(set(existing + valid_channels))
             save_data()
             await update.message.reply_text(f"✅ Added {len(valid_channels)} channel(s).")
-
         context.user_data.pop("state", None)
 
     elif state == "adding_admin" and user_id == OWNER_ID:
@@ -223,18 +266,15 @@ async def handle_forwards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in admins:
         return
 
-    batch = context.user_data.setdefault("forwarded_batch", [])
-    batch.append(update.message)
-
-    if len(batch) == 1:
-        context.user_data["pending_post"] = batch
+    context.user_data.setdefault("pending_post", []).append(update.message)
+    if len(context.user_data["pending_post"]) == 1:
         keyboard = [
             [KeyboardButton("✅ Post to All"), KeyboardButton("📂 Select Channels")],
             [KeyboardButton("❌ Cancel")]
         ]
         await update.message.reply_text(
             "📤 Choose where to post:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,28 +291,41 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_data()
             await query.edit_message_text(f"✅ Removed `{ch}`", parse_mode="Markdown")
 
-# ========================= Forward Function ============================
-async def forward_cleaned(message, context, target_chat_id):
-    if message.text:
-        await context.bot.send_message(chat_id=target_chat_id, text=message.text)
-    elif message.photo:
-        await context.bot.send_photo(chat_id=target_chat_id, photo=message.photo[-1].file_id, caption=message.caption)
-    elif message.video:
-        await context.bot.send_video(chat_id=target_chat_id, video=message.video.file_id, caption=message.caption)
-    elif message.document:
-        await context.bot.send_document(chat_id=target_chat_id, document=message.document.file_id, caption=message.caption)
+    # Added handler for removing admins
+    elif query.data.startswith("confirm_remove_admin"):
+        _, admin_id = query.data.split("|")
+        admin_id = int(admin_id)
+        if admin_id in admins and admin_id != OWNER_ID:
+            admins.remove(admin_id)
+            save_admins()
+            await query.edit_message_text(f"✅ Removed admin: `{admin_id}`", parse_mode="Markdown")
+        else:
+            await query.edit_message_text("❌ Cannot remove the owner or invalid admin.")
 
-# ========================= Main ============================
+async def forward_cleaned(message, context, target_chat_id):
+    try:
+        if message.text:
+            await context.bot.send_message(chat_id=target_chat_id, text=message.text)
+        elif message.photo:
+            await context.bot.send_photo(chat_id=target_chat_id, photo=message.photo[-1].file_id, caption=message.caption)
+        elif message.video:
+            await context.bot.send_video(chat_id=target_chat_id, video=message.video.file_id, caption=message.caption)
+        elif message.document:
+            await context.bot.send_document(chat_id=target_chat_id, document=message.document.file_id, caption=message.caption)
+    except Exception as e:
+        logger.error(f"Error forwarding to {target_chat_id}: {e}")
+
+# ================= Main =================
 def main():
     print(f"✅ Bot is starting... OWNER_ID: {OWNER_ID}")
     print(f"Current admins: {admins}")
-    
     app = Application.builder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.FORWARDED, handle_forwards))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_message))
-    
+
     print("🤖 Bot is running...")
     app.run_polling()
 
